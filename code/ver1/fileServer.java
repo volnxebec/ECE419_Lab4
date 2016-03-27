@@ -7,14 +7,13 @@ import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.Watcher.Event.EventType;
-
 import java.io.FileReader;
 import java.io.BufferedReader;
-
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-
 import java.io.IOException;
+import java.net.UnknownHostException;
 
 public class fileServer {
 
@@ -32,17 +31,29 @@ public class fileServer {
 
     
     //Require 2 arguments
-    //  arg1: zkServer:clientPort
-    //  arg2: fileServer:clientPort
-    if (args.length !=2 ) {
-      System.out.println("Usage: java -classpath lib/zookeeper-3.3.2.jar:lib/log4j-1.2.15.jar:. fileServer zkServer:clientPort fileServer:clientPort");
+    //  arg1: zkServer:serverPort
+    if (args.length !=1 ) {
+      System.out.println("Usage: java -classpath lib/zookeeper-3.3.2.jar:lib/log4j-1.2.15.jar:. fileServer zkServer:serverPort");
       return;
     }
 
-    fileServer fs = new fileServer(args[0], args[1]);
-    String[] myHostInfo = args[1].split(":");
-    int myPort = Integer.parseInt(myHostInfo[1]);
-    ServerSocket sS = new ServerSocket(myPort);
+
+    ServerSocket sS = new ServerSocket(0);
+
+    //Get localhost name and port
+    InetAddress ip;
+    String myHost = "";
+    try {
+      ip = InetAddress.getLocalHost();
+      myHost = ip.getHostName();
+    } catch (UnknownHostException e) {
+      e.printStackTrace();
+    }
+    int myPort = sS.getLocalPort();
+
+    System.out.println("hostName:hostPort = "+myHost+":"+myPort);
+
+    fileServer fs = new fileServer(args[0], myHost+":"+myPort);
 
     //System.out.println("Sleeping...");
     try {
