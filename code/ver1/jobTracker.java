@@ -58,6 +58,9 @@ public class jobTracker {
   public List<String> occupiedWorkerList;
   public List<String> totalWorkerList;
 
+  // Defines
+  public final int MAX_PARTITION = 27;
+
   // Main function
   public static void main(String[] args) {
 
@@ -71,16 +74,16 @@ public class jobTracker {
     jobTracker jt = new jobTracker(args[0]);
 
     //Other stuff code later
+    jt.start_run();
 
     //Don't die yet
-    while (true) {
-      try{ 
-        Thread.sleep(5000); 
-        //jt.initiateZnodes();
-        System.out.println("sleeping");
-      } catch (Exception e) {}
-
-    }
+    //while (true) {
+    //  try{ 
+    //    Thread.sleep(5000); 
+    //    //jt.initiateZnodes();
+    //    System.out.println("sleeping");
+    //  } catch (Exception e) {}
+    //}
   }
 
   
@@ -102,6 +105,73 @@ public class jobTracker {
     initiateZnodes();
     initiateChildrenWatch();
               
+  }
+
+  //Main jobTracker Loop
+  public void start_run() {
+
+    
+    while (true) {
+
+      try{ 
+        Thread.sleep(5000); 
+        //jt.initiateZnodes();
+        System.out.println("sleeping");
+      } catch (Exception e) {}
+
+      // Check if new client exists
+      // Client has 3 States
+      //  1. OPEN
+      //  2. INPROGRESS
+      //  3. <result> (this means it is done)
+      if (!clientList.isEmpty()) {
+        System.out.println(clientList);
+        for (String clientPath : clientList) {
+          try {
+            String fullClientPath = clientNode+"/"+clientPath;
+            // Get clientPath data
+            byte[] data = zk.getData(fullClientPath, false, null);
+            String clientData = new String(data);
+            System.out.println(clientPath+" data: "+clientData);
+
+            // Check for clientPath state, if OPEN partition and change its state
+            if (clientData.equals("OPEN")) {
+              // Partition and Add to /jobs/open/<password>
+              //  Also add znode for /jobs/inProgress/<password> and /jobs/done/<password>
+              String fullJobOpenPath = openJobNode+"/"+clientPath;
+              String fullJobInProgressPath = inProgressJobNode+"/"+clientPath;
+              String fullJobDonePath = doneJobNode+"/"+clientPath;
+              // TODO: probably need to change watcher for some of them...
+              createPersistentZnodes(fullJobOpenPath, watcher);
+              createPersistentZnodes(fullJobInProgressPath, watcher);
+              createPersistentZnodes(fullJobDonePath, watcher);
+              // Create sequential znodes for the password
+              for (int i=0; i<MAX_PARTITION; i++) {
+                createPersistentZnodes(fullJobOpenPath+"/"+i, watcher);
+              }
+
+              // Finally change state from OPEN -> INPROGRESS
+              //  This is done at the end for recovery purposes...
+              String inProgress = "INPROGRESS";
+              data = inProgress.getBytes();
+              Stat stat = zk.setData(fullClientPath, data, -1);
+            } 
+
+
+          } catch(KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+
+
+
+    }
+
+
+
   }
 
   // Initialize znode children watch...
@@ -156,36 +226,43 @@ public class jobTracker {
   private void handleClientEvent(WatchedEvent event) {
     System.out.println("handleClientEvent");
     clientList = createChildrenWatch(clientNode, clientWatcher);
+    System.out.println("clientList: "+clientList);
   }
 
   private void handleOpenJobEvent(WatchedEvent event) {
     System.out.println("handleOpenJobEvent");
     openJobList = createChildrenWatch(openJobNode, openJobWatcher);
+    System.out.println("openJobList: "+openJobList);
   }
 
   private void handleInProgressJobEvent(WatchedEvent event) {
     System.out.println("handleInProgressJobEvent");
     inProgressJobList = createChildrenWatch(inProgressJobNode, inProgressJobWatcher);
+    System.out.println("inProgressJobList: "+inProgressJobList);
   }
 
   private void handleDoneJobEvent(WatchedEvent event) {
     System.out.println("handleDoneJobEvent");
     doneJobList = createChildrenWatch(doneJobNode, doneJobWatcher);
+    System.out.println("doneJobList: "+doneJobList);
   }
 
   private void handleAvailableWorkerEvent(WatchedEvent event) {
     System.out.println("handleAvailableWorkerEvent");
     availableWorkerList = createChildrenWatch(availableWorkerNode, availableWorkerWatcher);
+    System.out.println("availableWorkerList: "+availableWorkerList);
   }
 
   private void handleOccupiedWorkerEvent(WatchedEvent event) {
     System.out.println("handleOccupiedWorkerEvent");
     occupiedWorkerList = createChildrenWatch(occupiedWorkerNode, occupiedWorkerWatcher);
+    System.out.println("occupiedWorkerList: "+occupiedWorkerList);
   }
 
   private void handleTotalWorkerEvent(WatchedEvent event) {
     System.out.println("handleTotalWorkerEvent");
     totalWorkerList = createChildrenWatch(totalWorkerNode, totalWorkerWatcher);
+    System.out.println("totalWorkerList: "+totalWorkerList);
   }
 
   private void initiateAllWatchers() {
