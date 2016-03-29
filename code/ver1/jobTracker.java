@@ -61,6 +61,11 @@ public class jobTracker {
   // Defines
   public final int MAX_PARTITION = 27;
 
+  // Primary-Backup fault tolerance variables
+  public String myPath = "/jobTracker";
+  public Watcher recoveryWatcher;
+  public boolean primary = false;
+
   // Main function
   public static void main(String[] args) {
 
@@ -74,16 +79,18 @@ public class jobTracker {
     jobTracker jt = new jobTracker(args[0]);
 
     //Other stuff code later
-    jt.start_run();
+    jt.checkMyPath();
+    //jt.start_run();
 
     //Don't die yet
-    //while (true) {
-    //  try{ 
-    //    Thread.sleep(5000); 
-    //    //jt.initiateZnodes();
-    //    System.out.println("sleeping");
-    //  } catch (Exception e) {}
-    //}
+    while (true) {
+      try{ 
+        Thread.sleep(5000); 
+        //jt.initiateZnodes();
+        if (jt.primary) jt.start_run();
+        else System.out.println("waiting to be primary");
+      } catch (Exception e) {}
+    }
   }
 
   
@@ -109,10 +116,7 @@ public class jobTracker {
 
   //Main jobTracker Loop
   public void start_run() {
-
-    
-    while (true) {
-
+    //while (true) {
       try{ 
         Thread.sleep(5000); 
         //jt.initiateZnodes();
@@ -166,12 +170,146 @@ public class jobTracker {
         }
       }
 
+      // Add Free Total workers to available workers znode
+      //  total workers could have 2 different states
+      //    1. FREE
+      //    2. BUSY
+      if (!totalWorkerList.isEmpty()) {
+        for (String workerPath : totalWorkerList) {
+          try {
+            String fullWorkerPath = totalWorkerNode+"/"+workerPath;
+            String fullFreeWorkerPath = availableWorkerNode+"/"+workerPath;
+            // Get state of worker
+            byte[] data = zk.getData(fullWorkerPath, false, null);
+            String workerState = new String(data);
+            // Add to free worker iff state==FREE
+            if (workerState.equals("FREE")) {
+              if (createPersistentZnodes(fullFreeWorkerPath, watcher)) {
+                System.out.println("Adding "+workerPath+" to FREE worker List");
+              }
+            }
+          } catch (KeeperException e) {
+            System.out.println(e.code());
+          } catch (Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+  
+        }
+      }
 
+      // Check first for available workers
+      //  TODO: NEED FAULT TOLERANCE CHECK HERE
+      if (!availableWorkerList.isEmpty()) {
+        //Check for any open jobs available
+        if (!openJobList.isEmpty()) {
+          try {
+            for (String freeWorkerPath : availableWorkerList) {
+              String fullFreeWorkerPath = availableWorkerNode+"/"+freeWorkerPath;
+              String fullBusyWorkerPath = occupiedWorkerNode+"/"+freeWorkerPath;
+              String fullTotalWorkerPath = totalWorkerNode+"/"+freeWorkerPath;
+              
+              byte[] data;
+              Stat stat;
+              //Now loop over the openJobs
+              for (String openJobPath : openJobList) {
+                String fullOpenJobPath = openJobNode+"/"+openJobPath;
+                String fullInProgressJobPath = inProgressJobNode+"/"+openJobPath;
+                //Find how many children this job path have...
+                List<String> openJobChildrenList = createChildrenWatch(fullOpenJobPath, watcher);
+                if (openJobChildrenList.size() > 0) {
+                  // Pick the first one, and assign it to this worker
+                  String assignJobPath = openJobChildrenList.get(0);
+                  System.out.println("Assigning "+freeWorkerPath+" to "+openJobPath+"/"+assignJobPath);
+                  String fullOpenAssignJobPath = fullOpenJobPath+"/"+assignJobPath;
+                  String fullInProgressAssignJobPath = fullInProgressJobPath+"/"+assignJobPath;
+                  // Move the assigned job from OPEN->INPROGRESS
+                  createPersistentZnodes(fullInProgressAssignJobPath, watcher);
+                  zk.delete(fullOpenAssignJobPath, -1);     
+                  // Add the name of the worker to the inProgress job for tracking purposes
+                  data = freeWorkerPath.getBytes();
+                  stat = zk.setData(fullInProgressAssignJobPath, data, -1);
+                  // Move the worker from Available->Occupied
+                  createPersistentZnodes(fullBusyWorkerPath, watcher);
+                  zk.delete(fullFreeWorkerPath, -1);
+                  // Change the status of the total worker znode
+                  String busy = "BUSY";
+                  data = busy.getBytes();
+                  stat = zk.setData(fullTotalWorkerPath, data, -1);
+                  // Add the name of the passphrase to the occupied worker node
+                  String jobDescription = openJobPath+"/"+assignJobPath;
+                  data = jobDescription.getBytes();
+                  stat = zk.setData(fullBusyWorkerPath, data, -1);
+                  break;
+                } else {
+                  continue;
+                }
+              }
+            }
+          } catch (KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {  
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
 
-    }
+      // Check for any jobs that are done...
+      //  The Done jobs can have 2 states
+      //    1. NO_RESULT
+      //    2. <result>
+      if (!doneJobList.isEmpty()) {
+        for (String doneJobPath : doneJobList) {
+          try {
+            String fullDoneJobPath = doneJobNode+"/"+doneJobPath;
 
+            // Count how many children each password path in Done has...
+            List<String> doneJobChildrenList = createChildrenWatch(fullDoneJobPath, watcher);
 
+            // In case of failure recovery...
+            if (!clientList.contains(doneJobPath)) {
+              // Now delete all nodes...
+              for (String jobResultPath : doneJobChildrenList) {
+                String fullJobResultPath = fullDoneJobPath+"/"+jobResultPath;
+                zk.delete(fullJobResultPath, -1);
+              }
+              zk.delete(fullDoneJobPath, -1);
+              continue;
+            }
 
+            // For fault tolerance, check if the current done node still exists in clientList
+            // If all of the jobs are done, let's find the final result
+            byte[] data;
+            String actualResult = "";
+            Stat stat;
+            String finalResult = "NO_RESULT";
+            if (doneJobChildrenList.size() == MAX_PARTITION) {
+              // Initialize the done job data in case of failure
+              for (String jobResultPath : doneJobChildrenList) {
+                String fullJobResultPath = fullDoneJobPath+"/"+jobResultPath;
+                // Get the result string of this job
+                data = zk.getData(fullJobResultPath, false, null);
+                actualResult = new String(data);
+                System.out.println(fullJobResultPath+" has result: "+actualResult);
+                // Check if is correct result, if it is, updated final result
+                if (!actualResult.equals("NO_RESULT")) {
+                  finalResult = actualResult;  
+                }
+                //Now delete this node...
+                //zk.delete(fullJobResultPath, -1);
+              }
+              //Update the client result
+              String fullClientPath = clientNode+"/"+doneJobPath;
+              data = finalResult.getBytes();
+              stat = zk.setData(fullClientPath, data, -1);
+            }
+          } catch(KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+    //}
   }
 
   // Initialize znode children watch...
@@ -210,8 +348,9 @@ public class jobTracker {
      createPersistentZnodes(totalWorkerNode, watcher); 
   }
 
-  private void createPersistentZnodes(String path, Watcher w) {
+  private boolean createPersistentZnodes(String path, Watcher w) {
     Stat stat = zkc.exists(path, w);
+    boolean success = false;
     if (stat == null) {
       System.out.println("Creating " + path);
       Code ret = zkc.create(
@@ -219,7 +358,9 @@ public class jobTracker {
               null,
               CreateMode.PERSISTENT
             );
+      success = true;
     }
+    return success;
   }
 
   // Different Watcher event handling functions
@@ -263,6 +404,22 @@ public class jobTracker {
     System.out.println("handleTotalWorkerEvent");
     totalWorkerList = createChildrenWatch(totalWorkerNode, totalWorkerWatcher);
     System.out.println("totalWorkerList: "+totalWorkerList);
+  }
+
+  private void handleRecoveryEvent(WatchedEvent event) {
+    String path = event.getPath();
+    EventType type = event.getType();
+    if (path.equalsIgnoreCase(myPath)) {
+      if (type == EventType.NodeDeleted) {
+        System.out.println(myPath+" deleted! Let's go!");
+        checkMyPath(); // Try to become the primary
+      }
+      if (type == EventType.NodeCreated) {
+        System.out.println(myPath + " created!");
+        try { Thread.sleep(5000); } catch (Exception e) {}
+        checkMyPath();  // re-enable the watch
+      }
+    }
   }
 
   private void initiateAllWatchers() {
@@ -315,7 +472,32 @@ public class jobTracker {
         handleTotalWorkerEvent(event);
       }
     };
+
+    recoveryWatcher = new Watcher() {
+      @Override
+      public void process(WatchedEvent event) {
+        handleRecoveryEvent(event);
+      }
+    };
   }
+
+  private void checkMyPath() {
+    Stat stat = zkc.exists(myPath, recoveryWatcher);
+    if (stat == null) {
+      System.out.println("Creating " + myPath);
+      Code ret = zkc.create(
+                  myPath,
+                  null,
+                  CreateMode.EPHEMERAL  // Znode type, set to EPHEMERAL
+                );
+      if (ret == Code.OK) {
+        System.out.println("Primary jobTracker!");
+        this.primary = true;
+        //this.start_run();
+      }
+    }
+  }
+
 
 
 }
