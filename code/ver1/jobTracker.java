@@ -58,6 +58,9 @@ public class jobTracker {
   public List<String> occupiedWorkerList;
   public List<String> totalWorkerList;
 
+  // worker fault tolerance feature
+  public List<String> failedWorkerList;
+
   // Defines
   public final int MAX_PARTITION = 27;
 
@@ -222,23 +225,24 @@ public class jobTracker {
                   System.out.println("Assigning "+freeWorkerPath+" to "+openJobPath+"/"+assignJobPath);
                   String fullOpenAssignJobPath = fullOpenJobPath+"/"+assignJobPath;
                   String fullInProgressAssignJobPath = fullInProgressJobPath+"/"+assignJobPath;
-                  // Move the assigned job from OPEN->INPROGRESS
-                  createPersistentZnodes(fullInProgressAssignJobPath, watcher);
-                  zk.delete(fullOpenAssignJobPath, -1);     
-                  // Add the name of the worker to the inProgress job for tracking purposes
-                  data = freeWorkerPath.getBytes();
-                  stat = zk.setData(fullInProgressAssignJobPath, data, -1);
                   // Move the worker from Available->Occupied
                   createPersistentZnodes(fullBusyWorkerPath, watcher);
-                  zk.delete(fullFreeWorkerPath, -1);
-                  // Change the status of the total worker znode
-                  String busy = "BUSY";
-                  data = busy.getBytes();
-                  stat = zk.setData(fullTotalWorkerPath, data, -1);
                   // Add the name of the passphrase to the occupied worker node
                   String jobDescription = openJobPath+"/"+assignJobPath;
                   data = jobDescription.getBytes();
                   stat = zk.setData(fullBusyWorkerPath, data, -1);
+                  // Move the assigned job from OPEN->INPROGRESS
+                  createPersistentZnodes(fullInProgressAssignJobPath, watcher);
+                  // Add the name of the worker to the inProgress job for tracking purposes
+                  data = freeWorkerPath.getBytes();
+                  stat = zk.setData(fullInProgressAssignJobPath, data, -1);
+                  // Change the status of the total worker znode
+                  String busy = "BUSY";
+                  data = busy.getBytes();
+                  stat = zk.setData(fullTotalWorkerPath, data, -1);
+                  // Delete other nodes
+                  zk.delete(fullOpenAssignJobPath, -1);     
+                  zk.delete(fullFreeWorkerPath, -1);
                   break;
                 } else {
                   continue;
@@ -249,6 +253,52 @@ public class jobTracker {
             System.out.println(e.code());
           } catch(Exception e) {  
             System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+
+      // For worker failures, need to check for the inProgress jobs and see
+      //  if their respective workers have failed or not.
+      // If they have, put the job back into open job list
+      if (!inProgressJobList.isEmpty()) {
+        for (String inPgJobPath : inProgressJobList) {
+          String fullInPgJobPath = inProgressJobNode+"/"+inPgJobPath;
+          List<String> thisInPgJobList = createChildrenWatch(fullInPgJobPath, watcher);
+          byte[] data;
+          Stat stat;
+          for (String thisInPgJobPath : thisInPgJobList) {
+            try {
+              String fullThisInPgJobPath = fullInPgJobPath+"/"+thisInPgJobPath;
+              // Get the data -> which worker is currently working on this
+              data = zk.getData(fullThisInPgJobPath, false, null);
+              String workerName = new String(data);
+              // Check if the current worker is still alive
+              if (!totalWorkerList.contains(workerName)) {
+                String thisJobPath = inPgJobPath+"/"+thisInPgJobPath;
+                String fullThisOpenJobPath = openJobNode+"/"+thisJobPath;
+                // The current worker is dead... need to put the job back into OPEN
+                System.out.println(workerName+" is dead, "+thisJobPath+" OPEN again");
+                createPersistentZnodes(fullThisOpenJobPath, watcher);
+                // Delete the occupied worker Node...
+                String fullOccupiedWorkerPath = occupiedWorkerNode+"/"+workerName; 
+                stat = zkc.exists(fullOccupiedWorkerPath, watcher);
+                if (stat != null) {
+                  zk.delete(fullOccupiedWorkerPath, -1);
+                }
+                // To make sure, also check the available worker Nodes...
+                String fullAvailableWorkerPath = availableWorkerNode+"/"+workerName;
+                stat = zkc.exists(fullAvailableWorkerPath, watcher);
+                if (stat != null) {
+                  zk.delete(fullAvailableWorkerPath, -1);
+                }
+                // Delete this in progress node
+                zk.delete(fullThisInPgJobPath, -1);
+              }
+            } catch (KeeperException e) {
+              System.out.println(e.code());
+            } catch (Exception e) {
+              System.out.println("Make node:" + e.getMessage());
+            }
           }
         }
       }
@@ -300,7 +350,10 @@ public class jobTracker {
               //Update the client result
               String fullClientPath = clientNode+"/"+doneJobPath;
               data = finalResult.getBytes();
-              stat = zk.setData(fullClientPath, data, -1);
+              stat = zkc.exists(fullClientPath, watcher);
+              if (stat != null) {
+                stat = zk.setData(fullClientPath, data, -1);
+              }
             }
           } catch(KeeperException e) {
             System.out.println(e.code());
@@ -402,6 +455,16 @@ public class jobTracker {
 
   private void handleTotalWorkerEvent(WatchedEvent event) {
     System.out.println("handleTotalWorkerEvent");
+    //Before updating totalWorkerList, first check to see if it was a failure...
+    //for (String workerPath : totalWorkerList) {
+    //  String fullWorkerPath = totalWorkerNode+"/"+workerPath;
+    //  Stat stat = zkc.exists(fullWorkerPath, watcher);
+    //  // This worker failed
+    //  if (stat == null) {
+    //    failedWorkerList.add(workerPath);
+    //    System.out.println(
+    //  }
+    //}
     totalWorkerList = createChildrenWatch(totalWorkerNode, totalWorkerWatcher);
     System.out.println("totalWorkerList: "+totalWorkerList);
   }
