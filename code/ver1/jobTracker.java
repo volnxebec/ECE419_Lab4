@@ -226,16 +226,11 @@ public class jobTracker {
                   String fullOpenAssignJobPath = fullOpenJobPath+"/"+assignJobPath;
                   String fullInProgressAssignJobPath = fullInProgressJobPath+"/"+assignJobPath;
                   // Move the worker from Available->Occupied
-                  createPersistentZnodes(fullBusyWorkerPath, watcher);
-                  // Add the name of the passphrase to the occupied worker node
+                  //  Add the name of the passphrase to the occupied worker node
                   String jobDescription = openJobPath+"/"+assignJobPath;
-                  data = jobDescription.getBytes();
-                  stat = zk.setData(fullBusyWorkerPath, data, -1);
+                  createPersistentZnodes(fullBusyWorkerPath, jobDescription, watcher);
                   // Move the assigned job from OPEN->INPROGRESS
-                  createPersistentZnodes(fullInProgressAssignJobPath, watcher);
-                  // Add the name of the worker to the inProgress job for tracking purposes
-                  data = freeWorkerPath.getBytes();
-                  stat = zk.setData(fullInProgressAssignJobPath, data, -1);
+                  createPersistentZnodes(fullInProgressAssignJobPath, freeWorkerPath, watcher);
                   // Change the status of the total worker znode
                   String busy = "BUSY";
                   data = busy.getBytes();
@@ -311,6 +306,8 @@ public class jobTracker {
         for (String doneJobPath : doneJobList) {
           try {
             String fullDoneJobPath = doneJobNode+"/"+doneJobPath;
+            String fullOpenJobPath = openJobNode+"/"+doneJobPath;
+            String fullInProgressJobPath = inProgressJobNode+"/"+doneJobPath;
 
             // Count how many children each password path in Done has...
             List<String> doneJobChildrenList = createChildrenWatch(fullDoneJobPath, watcher);
@@ -354,6 +351,59 @@ public class jobTracker {
               if (stat != null) {
                 stat = zk.setData(fullClientPath, data, -1);
               }
+            }
+          } catch(KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+
+      // Periodic openJob and inProgressJob cleanup...
+      if (!openJobList.isEmpty()) {
+        for (String openJobPath : openJobList) {
+          try {
+            String fullOpenJobPath = openJobNode+"/"+openJobPath;
+            List<String> openJobChildrenList = createChildrenWatch(fullOpenJobPath, watcher); 
+            if (!clientList.contains(openJobPath)) {
+              // Now delete all nodes...
+              for (String jobResultPath : openJobChildrenList) {
+                String fullJobResultPath = fullOpenJobPath+"/"+jobResultPath;
+                zk.delete(fullJobResultPath, -1);
+              }
+              zk.delete(fullOpenJobPath, -1);
+            }
+          } catch(KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+      if (!inProgressJobList.isEmpty()) {
+        for (String inPgJobPath : inProgressJobList) {
+          try {
+            String fullInPgJobPath = inProgressJobNode+"/"+inPgJobPath;
+            List<String> inPgJobChildrenList = createChildrenWatch(fullInPgJobPath, watcher); 
+            if (!clientList.contains(inPgJobPath) && inPgJobChildrenList.isEmpty()) {
+              zk.delete(fullInPgJobPath, -1);
+            }
+          } catch(KeeperException e) {
+            System.out.println(e.code());
+          } catch(Exception e) {
+            System.out.println("Make node:" + e.getMessage());
+          }
+        }
+      }
+
+      // Periodic available worker list cleanup...
+      if (!availableWorkerList.isEmpty()) {
+        for (String freeWorkerPath : availableWorkerList) {
+          try {
+            String fullFreeWorkerPath = availableWorkerNode+"/"+freeWorkerPath;
+            if (!totalWorkerList.contains(freeWorkerPath)) {
+              zk.delete(fullFreeWorkerPath, -1);
             }
           } catch(KeeperException e) {
             System.out.println(e.code());
@@ -409,6 +459,21 @@ public class jobTracker {
       Code ret = zkc.create(
               path,
               null,
+              CreateMode.PERSISTENT
+            );
+      success = true;
+    }
+    return success;
+  }
+
+  private boolean createPersistentZnodes(String path, String data, Watcher w) {
+    Stat stat = zkc.exists(path, w);
+    boolean success = false;
+    if (stat == null) {
+      System.out.println("Creating " + path);
+      Code ret = zkc.create(
+              path,
+              data,
               CreateMode.PERSISTENT
             );
       success = true;
