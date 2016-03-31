@@ -37,7 +37,6 @@ public class fileServer {
       return;
     }
 
-
     ServerSocket sS = new ServerSocket(0);
 
     //Get localhost name and port
@@ -55,12 +54,12 @@ public class fileServer {
 
     fileServer fs = new fileServer(args[0], myHost+":"+myPort);
 
-    //System.out.println("Sleeping...");
+    fs.checkpath();
+
     try {
+      //System.out.println("Sleeping...");
       Thread.sleep(2000);
     } catch (Exception e) {}
-
-    fs.checkpath();
 
     //System.out.println("Sleeping...");
     while (true) {
@@ -84,6 +83,7 @@ public class fileServer {
     int partitionID = 0;
 
     while ((word = textReader.readLine()) != null) {
+      //System.out.println("Reading... line number @"+wordCount);
       //Reset if word limit reached
       if (wordCount == MAX_WORD_LIMIT) {
         dP[partitionID] = partition;

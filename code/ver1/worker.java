@@ -17,6 +17,11 @@ import java.net.*;
 import java.io.*;
 import java.util.List;
 
+import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.DataInputStream;
+import java.io.PrintWriter;
+
 public class worker {
 
   // Znode path of all nodes...
@@ -47,6 +52,14 @@ public class worker {
   public String myName = "worker";
   public String myStatus = "FREE";
   public String myWorkerPath = "";
+
+  // FileServer connection variables
+  public Socket fileServerSocket;
+  public ObjectOutputStream toServer;
+  public ObjectInputStream fromServer;
+
+  // Hashing class
+  public MD5Test md5Hasher;
 
   public static void main(String[] args) {
     //Require 2 arguments
@@ -85,6 +98,8 @@ public class worker {
     initiateChildrenWatch();
 
     initiateMyWorker();
+
+    md5Hasher = new MD5Test();
   }
 
   // Main worker loop
@@ -140,20 +155,91 @@ public class worker {
   }
 
   // Password hash and partition function
-  public String getPasswordHash(String jobPath) {
+  private String getPasswordHash(String jobPath) {
     String result = "NO_RESULT";
     String[] jobArray = jobPath.split("/");
     String password = jobArray[0];
-    String partition = jobArray[1];
+    int partition = Integer.parseInt(jobArray[1]);
 
     // Hashing functions
-    try{ 
-      Thread.sleep(10000); 
-      System.out.println(myName+": "+"Hashing...");
-    } catch (Exception e) {}
+    System.out.println(myName+": "+"Hashing... started");
 
+    String[] dictionary = getDictionary(partition);
+
+    for (String word : dictionary) {
+      String testHash = md5Hasher.getHash(word);
+      if (testHash.equals(password)) {
+        result = word;
+        break;
+      }
+    }
+
+    System.out.println(myName+": "+"Hashing... finished");
 
     return result;
+  }
+
+  private String[] getDictionary(int p) {
+
+    String fullDict = "";
+
+    // Check to see if it exists first, if not wait for it to come back
+    while (true) {
+      Stat stat = zkc.exists(fileServerNode, watcher);
+      if (stat == null) {
+        // Check again...
+        try{ 
+          Thread.sleep(10000); 
+          System.out.println(myName+": "+"waiting for fileServer to come back online 1");
+        } catch (Exception ex) {}
+        continue;
+      }
+      // If it does exist, get its port info
+      byte[] data;
+      String host = "";
+      try {
+        data = zk.getData(fileServerNode, false, null);
+        host = new String(data);
+      } catch(KeeperException e) {
+        // If for some reason, reading the node failed, try again...
+        System.out.println(e.code());
+        try{ 
+          Thread.sleep(10000); 
+          System.out.println(myName+": "+"waiting for fileServer to come back online 2");
+        } catch (Exception ex) {}
+        continue;
+      } catch(Exception e) {
+        System.out.println(myName+": "+"Make node:" + e.getMessage());
+      }
+      // Parse the port info
+      String[] hostInfo = host.split(":");
+      String hostName = hostInfo[0];
+      int hostPort = Integer.parseInt(hostInfo[1]);
+      // Now try the socket connection...
+      try {
+        fileServerSocket = new Socket(hostName, hostPort);
+        toServer = new ObjectOutputStream(fileServerSocket.getOutputStream());
+        fromServer = new ObjectInputStream(fileServerSocket.getInputStream());
+        // Sending partition ID to fileServer
+        toServer.writeObject(p);
+        fullDict = (String) fromServer.readObject();
+        fileServerSocket.close();
+        break;
+      } catch(IOException e) {
+        try{ 
+          Thread.sleep(10000); 
+          System.out.println (myName+": "+"can't connect to host right now, try again");
+        } catch (Exception ex) {}
+        continue;
+      } catch(Exception e) {
+        System.out.println(myName+": "+"Make node:" + e.getMessage());
+      }
+    }
+    
+    String[] dictArray = fullDict.split(":");
+    System.out.println(fullDict);
+    return dictArray;
+
   }
 
   // Initiate myself into the /workerGroup/total/ znode
