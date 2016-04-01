@@ -107,7 +107,7 @@ public class Worker {
 
     while (true) {
       try{ 
-        Thread.sleep(5000); 
+        Thread.sleep(10); 
         System.out.println(myName+": "+"Sleeping");
       } catch (Exception e) {}
 
@@ -141,7 +141,7 @@ public class Worker {
           data = myStatus.getBytes();
           stat = zk.setData(fullTotalWorkerPath, data, -1);
           try{ 
-            Thread.sleep(2000); 
+            Thread.sleep(10); 
             System.out.println(myName+": "+"Taking a Break");
           } catch (Exception e) {}
         } catch(KeeperException e) {
@@ -189,7 +189,7 @@ public class Worker {
       if (stat == null) {
         // Check again...
         try{ 
-          Thread.sleep(10000); 
+          Thread.sleep(1000); 
           System.out.println(myName+": "+"waiting for fileServer to come back online 1");
         } catch (Exception ex) {}
         continue;
@@ -204,7 +204,7 @@ public class Worker {
         // If for some reason, reading the node failed, try again...
         System.out.println(e.code());
         try{ 
-          Thread.sleep(10000); 
+          Thread.sleep(1000); 
           System.out.println(myName+": "+"waiting for fileServer to come back online 2");
         } catch (Exception ex) {}
         continue;
@@ -227,7 +227,7 @@ public class Worker {
         break;
       } catch(IOException e) {
         try{ 
-          Thread.sleep(10000); 
+          Thread.sleep(1000); 
           System.out.println (myName+": "+"can't connect to host right now, try again");
         } catch (Exception ex) {}
         continue;
@@ -237,7 +237,7 @@ public class Worker {
     }
     
     String[] dictArray = fullDict.split(":");
-    System.out.println(fullDict);
+    //System.out.println(fullDict);
     return dictArray;
 
   }

@@ -4,3 +4,8 @@
 *.swp
 *Kim.Wei*
 *.java.swo
+*.out
+*.pid
+*.err
+*.result
+*.log

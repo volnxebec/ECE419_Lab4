@@ -88,7 +88,7 @@ public class JobTracker {
     //Don't die yet
     while (true) {
       try{ 
-        Thread.sleep(5000); 
+        Thread.sleep(250); 
         //jt.initiateZnodes();
         if (jt.primary) jt.start_run();
         else System.out.println("waiting to be primary");
@@ -120,11 +120,11 @@ public class JobTracker {
   //Main jobTracker Loop
   public void start_run() {
     //while (true) {
-      try{ 
-        Thread.sleep(5000); 
+      //try{ 
+      //  Thread.sleep(5000); 
         //jt.initiateZnodes();
-        System.out.println("sleeping");
-      } catch (Exception e) {}
+      //  System.out.println("sleeping");
+      //} catch (Exception e) {}
 
       // Check if new client exists
       // Client has 3 States
@@ -329,7 +329,10 @@ public class JobTracker {
             String actualResult = "";
             Stat stat;
             String finalResult = "NO_RESULT";
-            if (doneJobChildrenList.size() == MAX_PARTITION) {
+            String fullClientPath = clientNode+"/"+doneJobPath;
+            data = zk.getData(fullClientPath, false, null);
+            actualResult = new String(data);
+            if (doneJobChildrenList.size() == MAX_PARTITION && actualResult.equals("INPROGRESS")) {
               // Initialize the done job data in case of failure
               for (String jobResultPath : doneJobChildrenList) {
                 String fullJobResultPath = fullDoneJobPath+"/"+jobResultPath;
@@ -345,7 +348,6 @@ public class JobTracker {
                 //zk.delete(fullJobResultPath, -1);
               }
               //Update the client result
-              String fullClientPath = clientNode+"/"+doneJobPath;
               data = finalResult.getBytes();
               stat = zkc.exists(fullClientPath, watcher);
               if (stat != null) {
