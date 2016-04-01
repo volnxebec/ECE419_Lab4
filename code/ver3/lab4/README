@@ -1,0 +1,11 @@
+To compile the code go to src/ folder and type 
+  make
+And that's it, the code is now compiled
+
+To get instruction for running each component
+  make JobTracker 
+  make FileServer
+  make Worker
+  make ClientDriver
+
+For all design aspects, please refer to src/design.pdf
